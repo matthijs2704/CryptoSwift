@@ -59,6 +59,9 @@ struct DER {
   internal enum Error: Swift.Error {
     /// We were provided invalid DER data
     case invalidDERFormat
+    
+    case unsupportedAlgorithm
+    case invalidBitString
   }
 
   /// Integer to Octet String Primitive

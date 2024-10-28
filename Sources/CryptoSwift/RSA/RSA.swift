@@ -179,30 +179,34 @@ extension RSA {
       return
     } else if case .sequence(let algorithmParams) = params[0],
               case .bitString(let bitString) = params[1] {
+      // Define the expected RSA OID bytes for rsaEncryption: "1.2.840.113549.1.1.1"
+      let rsaOIDBytes: [UInt8] = [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01]
       
-      // Decode the RSAPublicKey from the bit string
-      // The first byte in BIT STRING is the number of unused bits, typically 0
+      guard let firstAlgorithmParam = algorithmParams.first else {
+        throw DER.Error.invalidDERFormat
+      }
+      if case .objectIdentifier(let oidBytes) = firstAlgorithmParam {
+        guard oidBytes.bytes == rsaOIDBytes else {
+          throw DER.Error.unsupportedAlgorithm
+        }
+      } else {
+        throw DER.Error.invalidDERFormat
+      }
+      
       guard bitString.count > 0 else {
         throw DER.Error.invalidDERFormat
       }
       
-      let unusedBits = bitString[0]
-      guard unusedBits == 0 else {
+      let rsaAsn = try ASN1.Decoder.decode(data: Data(bitString))
+      guard case .sequence(let rsaParams) = rsaAsn else { throw DER.Error.invalidDERFormat }
+      
+      guard case .integer(let modulus) = rsaParams[0],
+            case .integer(let publicExponent) = rsaParams[1] else {
         throw DER.Error.invalidDERFormat
       }
       
-      let rsaKeyData = Array(bitString.dropFirst())
-      let rsaAsn = try ASN1.Decoder.decode(data: Data(rsaKeyData))
-      
-      guard case .sequence(let rsaParams) = rsaAsn, rsaParams.count == 2 else {
-        throw DER.Error.invalidDERFormat
-      }
-      
-      if case .integer(let modulus) = params[0],
-         case .integer(let publicExponent) = params[1] {
-        self.init(n: BigUInteger(modulus), e: BigUInteger(publicExponent))
-        return
-      }
+      self.init(n: BigUInteger(modulus), e: BigUInteger(publicExponent))
+      return
     }
     
     throw DER.Error.invalidDERFormat
