@@ -44,25 +44,25 @@ public final class RSA: DERCodable {
     /// The error thrown when Decryption fails
     case invalidDecryption
   }
-
+  
   /// RSA Modulus
   public let n: BigUInteger
-
+  
   /// RSA Public Exponent
   public let e: BigUInteger
-
+  
   /// RSA Private Exponent
   public let d: BigUInteger?
-
+  
   /// The size of the modulus, in bits
   public let keySize: Int
-
+  
   /// The size of the modulus, in bytes (rounded up to the nearest full byte)
   public let keySizeBytes: Int
-
+  
   /// The underlying primes used to generate the Private Exponent
   private let primes: (p: BigUInteger, q: BigUInteger)?
-
+  
   /// Initialize with RSA parameters
   /// - Parameters:
   ///   - n: The RSA Modulus
@@ -73,11 +73,11 @@ public final class RSA: DERCodable {
     self.e = e
     self.d = d
     self.primes = nil
-
+    
     self.keySize = n.bitWidth
     self.keySizeBytes = n.byteWidth
   }
-
+  
   /// Initialize with RSA parameters
   /// - Parameters:
   ///   - n: The RSA Modulus
@@ -90,28 +90,28 @@ public final class RSA: DERCodable {
       self.init(n: BigUInteger(Data(n)), e: BigUInteger(Data(e)))
     }
   }
-
+  
   /// Initialize with a generated key pair
   /// - Parameter keySize: The size of the modulus
   public convenience init(keySize: Int) throws {
     // Generate prime numbers
     let p = BigUInteger.generatePrime(keySize / 2)
     let q = BigUInteger.generatePrime(keySize / 2)
-
+    
     // Calculate modulus
     let n = p * q
-
+    
     // Calculate public and private exponent
     let e: BigUInteger = 65537
     let phi = (p - 1) * (q - 1)
     guard let d = e.inverse(phi) else {
       throw RSA.Error.invalidInverseNotCoprimes
     }
-
+    
     // Initialize
     try self.init(n: n, e: e, d: d, p: p, q: q)
   }
-
+  
   /// Initialize with RSA parameters
   /// - Parameters:
   ///   - n: The RSA Modulus
@@ -123,17 +123,17 @@ public final class RSA: DERCodable {
     // Ensure the supplied parameters are correct...
     // Calculate modulus
     guard n == p * q else { throw Error.invalidPrimes }
-
+    
     // Calculate public and private exponent
     let phi = (p - 1) * (q - 1)
     guard d == e.inverse(phi) else { throw Error.invalidPrimes }
-
+    
     // Regular initialization
     self.n = n
     self.e = e
     self.d = d
     self.primes = (p, q)
-
+    
     self.keySize = n.bitWidth
     self.keySizeBytes = n.byteWidth
   }
@@ -167,34 +167,47 @@ extension RSA {
   /// ```
   public convenience init(publicDER der: Array<UInt8>) throws {
     let asn = try ASN1.Decoder.decode(data: Data(der))
-
+    
     // Enforce the above ASN Structure
     guard case .sequence(let params) = asn else { throw DER.Error.invalidDERFormat }
     guard params.count == 2 else { throw DER.Error.invalidDERFormat }
-
-    guard case .integer(let modulus) = params[0] else { throw DER.Error.invalidDERFormat }
     
-    let pE: Data
-    if case .integer(let publicExponent) = params[1] {
-      pE = publicExponent
-    } else if case .bitString(data: let bitString) = params[1] {
+    // Potential RSAPublicKey structure
+    if case .integer(let modulus) = params[0],
+       case .integer(let publicExponent) = params[1] {
+      self.init(n: BigUInteger(modulus), e: BigUInteger(publicExponent))
+      return
+    } else if case .sequence(let algorithmParams) = params[0],
+              case .bitString(let bitString) = params[1] {
+      
+      // Decode the RSAPublicKey from the bit string
+      // The first byte in BIT STRING is the number of unused bits, typically 0
       guard bitString.count > 0 else {
-          throw DER.Error.invalidDERFormat
+        throw DER.Error.invalidDERFormat
       }
       
       let unusedBits = bitString[0]
       guard unusedBits == 0 else {
-          throw DER.Error.invalidDERFormat
+        throw DER.Error.invalidDERFormat
       }
       
-      let exponentData = bitString.dropFirst()
+      let rsaKeyData = Array(bitString.dropFirst())
+      let rsaAsn = try ASN1.Decoder.decode(data: Data(rsaKeyData))
       
-      pE = exponentData
-    } else { throw DER.Error.invalidDERFormat }
-
-    self.init(n: BigUInteger(modulus), e: BigUInteger(pE))
+      guard case .sequence(let rsaParams) = rsaAsn, rsaParams.count == 2 else {
+        throw DER.Error.invalidDERFormat
+      }
+      
+      if case .integer(let modulus) = params[0],
+         case .integer(let publicExponent) = params[1] {
+        self.init(n: BigUInteger(modulus), e: BigUInteger(publicExponent))
+        return
+      }
+    }
+    
+    throw DER.Error.invalidDERFormat
   }
-
+  
   /// Decodes the provided data into a Private RSA Key
   ///
   /// [IETF Spec RFC2313](https://datatracker.ietf.org/doc/html/rfc2313#section-7.2)
@@ -217,7 +230,7 @@ extension RSA {
   /// ```
   internal convenience init(privateDER der: Array<UInt8>) throws {
     let asn = try ASN1.Decoder.decode(data: Data(der))
-
+    
     // Enforce the above ASN Structure (do we need to extract and verify the eponents and coefficients?)
     guard case .sequence(let params) = asn else { throw DER.Error.invalidDERFormat }
     guard params.count == 9 else { throw DER.Error.invalidDERFormat }
@@ -230,28 +243,28 @@ extension RSA {
     guard case .integer(let exponent1) = params[6] else { throw DER.Error.invalidDERFormat }
     guard case .integer(let exponent2) = params[7] else { throw DER.Error.invalidDERFormat }
     guard case .integer(let coefficient) = params[8] else { throw DER.Error.invalidDERFormat }
-
+    
     // We only support version 0x00 == RFC2313 at the moment
     // - TODO: Support multiple primes 0x01 version defined in [RFC3447](https://www.rfc-editor.org/rfc/rfc3447#appendix-A.1.2)
     guard version == Data(hex: "0x00") else { throw Error.unsupportedRSAVersion }
-
+    
     // Calculate public and private exponent
     let phi = (BigUInteger(prime1) - 1) * (BigUInteger(prime2) - 1)
     guard let d = BigUInteger(publicExponent).inverse(phi) else { throw Error.invalidPrimes }
     guard BigUInteger(privateExponent) == d else { throw Error.invalidPrimes }
-
+    
     // Ensure the provided coefficient is correct (derived from the primes)
     guard let calculatedCoefficient = BigUInteger(prime2).inverse(BigUInteger(prime1)) else { throw RSA.Error.unableToCalculateCoefficient }
     guard calculatedCoefficient == BigUInteger(coefficient) else { throw RSA.Error.invalidPrimes }
-
+    
     // Ensure the provided exponents are correct as well
     guard (d % (BigUInteger(prime1) - 1)) == BigUInteger(exponent1) else { throw RSA.Error.invalidPrimes }
     guard (d % (BigUInteger(prime2) - 1)) == BigUInteger(exponent2) else { throw RSA.Error.invalidPrimes }
-
+    
     // Proceed with regular initialization
     try self.init(n: BigUInteger(modulus), e: BigUInteger(publicExponent), d: BigUInteger(privateExponent), p: BigUInteger(prime1), q: BigUInteger(prime2))
   }
-
+  
   /// Attempts to instantiate an RSA Key when given the ASN1 DER encoded external representation of the Key
   ///
   /// An example of importing a SecKey RSA key (from Apple's `Security` framework) for use within CryptoSwift
@@ -308,7 +321,7 @@ extension RSA {
       ])
     return ASN1.Encoder.encode(pubKeyAsnNode)
   }
-
+  
   /// The DER representation of this private key
   ///
   /// [IETF Spec RFC2313](https://datatracker.ietf.org/doc/html/rfc2313#section-7.2)
@@ -336,7 +349,7 @@ extension RSA {
     guard let primes = primes else { throw RSA.Error.noPrimes }
     // Make sure we can calculate our coefficient (inverse of q mod p)
     guard let coefficient = primes.q.inverse(primes.p) else { throw RSA.Error.unableToCalculateCoefficient }
-
+    
     let paramWidth = self.keySizeBytes / 2
     // Structure the data (according to RFC2313, version 0x00 RSA Private Key Syntax)
     let mod = self.n.serialize()
@@ -352,11 +365,11 @@ extension RSA {
         .integer(data: DER.i2ospData(x: (d % (primes.q - 1)).serialize().bytes, size: paramWidth)),
         .integer(data: DER.i2ospData(x: coefficient.serialize().bytes, size: paramWidth))
       ])
-
+    
     // Encode and return the data
     return ASN1.Encoder.encode(privateKeyAsnNode)
   }
-
+  
   /// This method returns the DER encoding of the RSA Key.
   ///
   /// - Returns: The ASN1 DER Encoding of the Public or Private RSA Key
@@ -411,7 +424,7 @@ extension RSA {
       return try Data(self.publicKeyDER())
     }
   }
-
+  
   public func publicKeyExternalRepresentation() throws -> Data {
     return try Data(self.publicKeyDER())
   }
@@ -420,7 +433,7 @@ extension RSA {
 // MARK: CS.BigUInt extension
 
 extension BigUInteger {
-
+  
   public static func generatePrime(_ width: Int) -> BigUInteger {
     // Note: Need to find a better way to generate prime numbers
     while true {
