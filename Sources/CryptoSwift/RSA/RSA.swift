@@ -165,7 +165,7 @@ extension RSA {
   ///   publicExponent    INTEGER,  -- e
   /// }
   /// ```
-  internal convenience init(publicDER der: Array<UInt8>) throws {
+  public convenience init(publicDER der: Array<UInt8>) throws {
     let asn = try ASN1.Decoder.decode(data: Data(der))
 
     // Enforce the above ASN Structure
@@ -173,9 +173,26 @@ extension RSA {
     guard params.count == 2 else { throw DER.Error.invalidDERFormat }
 
     guard case .integer(let modulus) = params[0] else { throw DER.Error.invalidDERFormat }
-    guard case .integer(let publicExponent) = params[1] else { throw DER.Error.invalidDERFormat }
+    
+    let pE: Data
+    if case .integer(let publicExponent) = params[1] {
+      pE = publicExponent
+    } else if case .bitString(data: let bitString) = params[1] {
+      guard bitString.count > 0 else {
+          throw DER.Error.invalidDERFormat
+      }
+      
+      let unusedBits = bitString[0]
+      guard unusedBits == 0 else {
+          throw DER.Error.invalidDERFormat
+      }
+      
+      let exponentData = bitString.dropFirst()
+      
+      pE = exponentData
+    } else { throw DER.Error.invalidDERFormat }
 
-    self.init(n: BigUInteger(modulus), e: BigUInteger(publicExponent))
+    self.init(n: BigUInteger(modulus), e: BigUInteger(pE))
   }
 
   /// Decodes the provided data into a Private RSA Key
