@@ -198,7 +198,8 @@ extension RSA {
       }
       
       let rsaAsn = try ASN1.Decoder.decode(data: Data(bitString))
-      guard case .sequence(let rsaParams) = rsaAsn else { throw DER.Error.invalidDERFormat }
+      guard case .sequence(let rsaParams) = rsaAsn,
+            params.count == 2 else { throw DER.Error.invalidDERFormat }
       
       guard case .integer(let modulus) = rsaParams[0],
             case .integer(let publicExponent) = rsaParams[1] else {
